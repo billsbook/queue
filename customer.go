@@ -14,26 +14,30 @@ var (
 )
 
 type customer struct {
-	Name  string
-	Email string
+	Name  string `json:"name"`
+	Email string `json:"email"`
 }
 
 type createCustomerMsg struct {
-	ID        string
-	Timestamp int64
-	Customer  customer
+	ID        string   `json:"id"`
+	Timestamp int64    `json:"timestamp"`
+	Customer  customer `json:"customer"`
 }
 
 // Target method define Topic
-func (c *createCustomerMsg) Target() string {
-	return "Customers"
+func (c *createCustomerMsg) target() string {
+	return "costumer"
 }
 
-func (m *createCustomerMsg) MsgType() msgType {
+func (m *createCustomerMsg) msgType() msgType {
 	return createCustomerMsgType
 }
 
-func CreateConsumerMsg(name, email string) Msg {
+func (m *createCustomerMsg) Value() interface{} {
+	return m.Customer
+}
+
+func CreateConsumerMsg(name, email string) msg {
 	m := &createCustomerMsg{
 		ID:        "id_" + strconv.Itoa(int(atomic.LoadUint64(&createCustomerCount))),
 		Timestamp: time.Now().Unix(),

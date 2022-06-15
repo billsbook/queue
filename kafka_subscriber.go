@@ -10,7 +10,7 @@ import (
 type KafkaGroupID string
 
 const (
-	CostumerGroup KafkaGroupID = "customer"
+	CostumerGroup KafkaGroupID = "customer_service"
 )
 
 // kafkaSubscriber is respoinsible for subscribing to multiple topics
@@ -21,11 +21,13 @@ type kafkaSubscriber struct {
 	topics        []string
 
 	groupHandler groupHandler
+
+	errors chan error
 }
 
 // NewKafkaSubscriber creates a new kafka subscriber
-func NewKafkaSubscriber(group KafkaGroupID, topics []string) (Subscriber, error) {
-	client, err := sarama.NewClient(topics, nil)
+func NewKafkaSubscriber(group KafkaGroupID, brokers, topics []string) (Subscriber, error) {
+	client, err := sarama.NewClient(brokers, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -39,28 +41,33 @@ func NewKafkaSubscriber(group KafkaGroupID, topics []string) (Subscriber, error)
 		consumerGroup: g,
 		topics:        topics,
 		groupHandler: groupHandler{
-			reciever: make(chan Msg),
+			reciever: make(chan msg),
 		}}, nil
 }
 
-func (s *kafkaSubscriber) Subscibe() <-chan Msg {
+func (s *kafkaSubscriber) Recieve() <-chan msg {
 	return s.groupHandler.reciever
 }
 
-// Start must run in a separate goroutine before using Subscribe method
-func (s *kafkaSubscriber) Start(wg sync.WaitGroup) error {
+// Subscribe must run in a goroutine
+func (s *kafkaSubscriber) Subscribe(wg *sync.WaitGroup) {
 	defer wg.Done()
 	ctx := context.Background()
 
 	for {
 		if err := s.consumerGroup.Consume(ctx, s.topics, &s.groupHandler); err != nil {
-			return err
+			s.errors <- err
+			return
 		}
 	}
 }
 
+func (s *kafkaSubscriber) Error() <-chan error {
+	return s.errors
+}
+
 type groupHandler struct {
-	reciever chan Msg
+	reciever chan msg
 }
 
 func (h *groupHandler) Setup(sarama.ConsumerGroupSession) error {
@@ -74,13 +81,13 @@ func (h *groupHandler) Cleanup(sarama.ConsumerGroupSession) error {
 func (h *groupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
 	for msg := range claim.Messages() {
 
-		u := &union{}
-		err := u.Decode(msg.Value)
+		u := newUnion()
+		err := u.decode(msg.Value)
 
 		// if message is not a union, ignore it and mark it as consumed
 		if err != nil {
 			sess.MarkMessage(msg, "")
-			continue
+			return err
 		}
 
 		// if message is a union retrieve the messages from it

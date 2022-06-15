@@ -1,6 +1,8 @@
 package queue
 
-import "github.com/Shopify/sarama"
+import (
+	"github.com/Shopify/sarama"
+)
 
 type kafkaPublisher struct {
 	P sarama.SyncProducer
@@ -17,15 +19,15 @@ func NewKafkaPublisher(brokers []string) (Publisher, error) {
 
 // Note: all messages are sent to the same topic
 // so all messages Target method must return the same value
-func (p *kafkaPublisher) Publish(msgs map[int]Msg) error {
+func (p *kafkaPublisher) Publish(msgs ...msg) error {
 	u := newUnion()
 
-	t0 := msgs[0].Target()
-	for i, m := range msgs {
-		if m.Target() != t0 {
-			return ErrTargetMismatch
+	t0 := msgs[0].target()
+	for _, m := range msgs {
+		if m.target() != t0 || m.target() == "" {
+			return errTargetMismatch
 		}
-		u.Messages[m.MsgType()][i] = m
+		u.Messages[m.msgType()] = append(u.Messages[m.msgType()], m)
 	}
 
 	pm := &sarama.ProducerMessage{

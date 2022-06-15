@@ -9,15 +9,15 @@ import (
 // union is a message that can contain multiple messages
 // union also implements the sarama.Encoder interface
 type union struct {
-	ID        string
-	Timestamp int64
-	Messages  map[msgType]map[int]Msg
+	ID        string            `json:"id"`
+	Timestamp int64             `json:"timestamp"`
+	Messages  map[msgType][]msg `json:"messages"`
 }
 
 func newUnion() *union {
 	u := &union{
 		Timestamp: time.Now().Unix(),
-		Messages:  make(map[msgType]map[int]Msg),
+		Messages:  make(map[msgType][]msg),
 	}
 
 	return u.generateId()
@@ -34,7 +34,7 @@ func (u *union) Length() int {
 }
 
 // decode a union from a byte array
-func (u *union) Decode(b []byte) error {
+func (u *union) decode(b []byte) error {
 	err := json.Unmarshal(b, u)
 	return err
 }
@@ -46,8 +46,48 @@ func (u *union) generateId() *union {
 
 }
 
+// implement json.Unmarshaler interface
+func (u *union) UnmarshalJSON(b []byte) error {
+	var tmpUnion struct {
+		ID        string                    `json:"id"`
+		Timestamp int64                     `json:"timestamp"`
+		Messages  map[msgType][]interface{} `json:"messages"`
+	}
+
+	err := json.Unmarshal(b, &tmpUnion)
+	if err != nil {
+		return err
+	}
+
+	for k := range tmpUnion.Messages {
+		switch k {
+		case createCustomerMsgType:
+			var result struct {
+				ID        string                           `json:"id"`
+				Timestamp int64                            `json:"timestamp"`
+				Messages  map[msgType][]*createCustomerMsg `json:"messages"`
+			}
+			err = json.Unmarshal(b, &result)
+			if err != nil {
+				return err
+			}
+			u.ID = result.ID
+			u.Timestamp = result.Timestamp
+
+			for _, m := range result.Messages[k] {
+				u.Messages[k] = append(u.Messages[k], m)
+			}
+		default:
+			// retrun an error if the message type is not supported
+			return errUnsupportedMessageType
+		}
+	}
+	return nil
+}
+
 // generate random string from a-z and A-Z and 0-9
 func generateRandomString(n int) string {
+	rand.Seed(time.Now().UnixNano())
 	const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	b := make([]byte, n)
 	for i := range b {

@@ -1,16 +1,26 @@
 package queue
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/Shopify/sarama"
+	"github.com/billsbook/queue/models"
+	"github.com/billsbook/queue/types"
 )
 
-type KafkaGroupID string
+type processedMsg struct {
+	id  string
+	msg *sarama.ConsumerMessage
+}
+
+type KafkaConsumerGroup string
 
 const (
-	CostumerGroup KafkaGroupID = "customer_service"
+	CostumerGroup KafkaConsumerGroup = "customer_service"
 )
 
 // kafkaSubscriber is respoinsible for subscribing to multiple topics
@@ -19,14 +29,16 @@ const (
 type kafkaSubscriber struct {
 	consumerGroup sarama.ConsumerGroup
 	topics        []string
+	groupHandler  groupHandler
 
-	groupHandler groupHandler
+	store types.SubscriberStore
 
 	errors chan error
 }
 
 // NewKafkaSubscriber creates a new kafka subscriber
-func NewKafkaSubscriber(group KafkaGroupID, brokers, topics []string) (Subscriber, error) {
+func NewKafkaSubscriber(group KafkaConsumerGroup, service Service, brokers, topics []string) (Subscriber, error) {
+
 	client, err := sarama.NewClient(brokers, nil)
 	if err != nil {
 		return nil, err
@@ -37,16 +49,47 @@ func NewKafkaSubscriber(group KafkaGroupID, brokers, topics []string) (Subscribe
 		return nil, err
 	}
 
-	return &kafkaSubscriber{
+	s := &kafkaSubscriber{
 		consumerGroup: g,
 		topics:        topics,
+		store:         newSubStore(service),
 		groupHandler: groupHandler{
-			reciever: make(chan msg),
-		}}, nil
+			reciever:   make(chan types.Msg),
+			processed:  make(chan *processedMsg),
+			pendingMsg: []*sarama.ConsumerMessage{},
+		}}
+	s.groupHandler.subStore = s.store
+	return s, nil
 }
 
-func (s *kafkaSubscriber) Recieve() <-chan msg {
+func (s *kafkaSubscriber) Recieve() <-chan types.Msg {
 	return s.groupHandler.reciever
+}
+
+func (h *kafkaSubscriber) Processed(msg types.Msg) error {
+
+	b, err := msg.Encode()
+	if err != nil {
+		return err
+	}
+
+	// save msg as processed
+	h.store.SaveMsgID(msg)
+
+	// remove msg from pendingMsg
+	for i, m := range h.groupHandler.pendingMsg {
+		if bytes.Equal(m.Value, b) {
+			h.groupHandler.pendingMsg = append(h.groupHandler.pendingMsg[:i], h.groupHandler.pendingMsg[i+1:]...)
+			pm := &processedMsg{
+				id:  msg.ID(),
+				msg: m,
+			}
+			h.groupHandler.processed <- pm
+			return nil
+		}
+	}
+	return errors.New("msg not found")
+
 }
 
 // Subscribe must run in a goroutine
@@ -67,44 +110,45 @@ func (s *kafkaSubscriber) Error() <-chan error {
 }
 
 type groupHandler struct {
-	reciever chan msg
+	reciever   chan types.Msg
+	subStore   types.SubscriberStore
+	pendingMsg []*sarama.ConsumerMessage
+	processed  chan *processedMsg
 }
 
-func (h *groupHandler) Setup(sarama.ConsumerGroupSession) error {
+func (h *groupHandler) Setup(sess sarama.ConsumerGroupSession) error {
+	fmt.Printf("start new session on topics: %v as member: %s\n", sess.Claims(), sess.MemberID())
 	return nil
 }
 
-func (h *groupHandler) Cleanup(sarama.ConsumerGroupSession) error {
+func (h *groupHandler) Cleanup(sess sarama.ConsumerGroupSession) error {
+
+	fmt.Printf("cleanup session on topics: %v as member: %s\n", sess.Claims(), sess.MemberID())
 	return nil
 }
 
 func (h *groupHandler) ConsumeClaim(sess sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
+
+	go func(sess sarama.ConsumerGroupSession) {
+		for pm := range h.processed {
+			sess.MarkMessage(pm.msg, "")
+			fmt.Printf("message `%s` marked as processed\n", pm.id)
+		}
+	}(sess)
+
 	for msg := range claim.Messages() {
-
-		u := newUnion()
-		err := u.decode(msg.Value)
-
-		// if message is not a union, ignore it and mark it as consumed
-		if err != nil {
+		m, err := models.DecodeMsg(msg.Value)
+		// if message is not a valid, ignore it and mark it as consumed
+		if err != nil || h.subStore.IsProcessed(m) {
 			sess.MarkMessage(msg, "")
-			return err
+			continue
 		}
 
-		// if message is a union retrieve the messages from it
-		// and send them to the reciever channel
+		// add msg to pendingMsg
+		h.pendingMsg = append(h.pendingMsg, msg)
 
-		// TODO: for guarante of exactly delivery once
-		// we need to save messages in a persistent storage before marking them as consumed
-		// and after proccessing messages delete therm from the persistent storage
-		for _, ms := range u.Messages {
-			for _, m := range ms {
-				h.reciever <- m
-			}
-		}
-
-		// after all union messages are sent to the reciever channel
-		// mark the message as consumed
-		sess.MarkMessage(msg, "")
+		// if message is valid send it to the reciever channel
+		h.reciever <- m
 
 	}
 	return nil

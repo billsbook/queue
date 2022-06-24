@@ -1,5 +1,7 @@
 package queue
 
+import "github.com/billsbook/queue/types"
+
 type Publisher interface {
-	Publish(msgs ...msg) error
+	Publish(msg types.Msg) error
 }

@@ -31,7 +31,7 @@ type kafkaSubscriber struct {
 	topics        []string
 	groupHandler  groupHandler
 
-	store types.SubscriberStore
+	store *subStore
 
 	errors chan error
 }
@@ -96,7 +96,7 @@ func (h *kafkaSubscriber) Processed(msg types.Msg) error {
 func (s *kafkaSubscriber) Subscribe(wg *sync.WaitGroup) {
 	defer wg.Done()
 	ctx := context.Background()
-
+	go s.store.Clean()
 	for {
 		if err := s.consumerGroup.Consume(ctx, s.topics, &s.groupHandler); err != nil {
 			s.errors <- err
@@ -111,13 +111,13 @@ func (s *kafkaSubscriber) Error() <-chan error {
 
 type groupHandler struct {
 	reciever   chan types.Msg
-	subStore   types.SubscriberStore
+	subStore   *subStore
 	pendingMsg []*sarama.ConsumerMessage
 	processed  chan *processedMsg
 }
 
 func (h *groupHandler) Setup(sess sarama.ConsumerGroupSession) error {
-	fmt.Printf("start new session on topics: %v as member: %s\n", sess.Claims(), sess.MemberID())
+	fmt.Printf("start new session on topics: %v as member: %s\n\n\n", sess.Claims(), sess.MemberID())
 	return nil
 }
 

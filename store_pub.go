@@ -17,7 +17,7 @@ type pubStore struct {
 	key    string
 }
 
-func newPubStore(service Service) types.PublisherStore {
+func newPubStore(service Service) *pubStore {
 	s := &pubStore{
 		client: redis.NewClient(&redis.Options{
 			Addr: "localhost:6379"}),

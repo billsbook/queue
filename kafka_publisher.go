@@ -7,7 +7,7 @@ import (
 
 type kafkaPublisher struct {
 	producer sarama.SyncProducer
-	store    types.PublisherStore
+	store    *pubStore
 }
 
 // NewKafkaPublisher creates a new kafka publisher

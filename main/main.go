@@ -14,14 +14,20 @@ func main() {
 	// if err != nil {
 	// 	panic(err)
 	// }
+	// wg := &sync.WaitGroup{}
+	// wg.Add(1)
+	// go publisher.RetryEngine(wg)
 
 	// for i := 0; i < 10; i++ {
 	// 	err = publisher.Publish(models.CreateCustomerMsg(fmt.Sprintf("%d", i), "alikarimi", "alikarimi@gmail.com"))
 	// 	if err != nil {
-	// 		panic(err)
+	// 		continue
 	// 	}
+	// 	time.Sleep(time.Second * 2)
 	// 	fmt.Println("Published")
 	// }
+
+	// wg.Wait()
 
 	subscriber, err := queue.NewKafkaSubscriber(queue.CostumerGroup, queue.CustomerService, []string{"localhost:9092"}, []string{string(types.CustomerTopic)})
 	if err != nil {
